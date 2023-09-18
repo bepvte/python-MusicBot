@@ -11,12 +11,14 @@ import shutil
 import sys
 import time
 import traceback
+import datetime
 from collections import defaultdict
 from datetime import timedelta
 from functools import wraps
 from io import BytesIO, StringIO
 from textwrap import dedent
 from typing import Optional
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import aiohttp
 import colorlog
@@ -94,6 +96,9 @@ class MusicBot(discord.Client):
 
         self.aiolocks = defaultdict(asyncio.Lock)
         self.downloader = downloader.Downloader(download_folder="audio_cache")
+
+        self.scheduler = AsyncIOScheduler()
+        self.scheduler.start()
 
         log.info("Starting MusicBot {}".format(BOTVERSION))
 
@@ -344,6 +349,9 @@ class MusicBot(discord.Client):
                 continue
 
             if channel and isinstance(channel, discord.VoiceChannel):
+                if self.config.disconnect_on_restart:
+                    continue
+
                 log.info("Attempting to join {0.guild.name}/{0.name}".format(channel))
 
                 chperms = channel.permissions_for(guild.me)
@@ -675,6 +683,18 @@ class MusicBot(discord.Client):
                     "auto_paused"
                 ] = True
 
+        if self.config.empty_disconnect and self._check_if_empty(
+            player.voice_client.channel
+        ):
+            log.debug("Started timer to leave %s", player.voice_client.channel)
+            self.scheduler.add_job(
+                self.disconnect_voice_client,
+                "date",
+                run_date=datetime.datetime.now() + self.config.empty_disconnect,
+                args=[player.voice_client.guild],
+                id=str(player.voice_client.guild.id),
+                replace_existing=True,
+            )
         if (
             not player.playlist.entries
             and not player.current_entry
@@ -4162,6 +4182,28 @@ class MusicBot(discord.Client):
         ):  # if bot was disconnected from channel
             await self.disconnect_voice_client(before.channel.guild)
             return
+
+        if self.config.empty_disconnect:
+            try:
+                player = await self.get_player(channel)
+            except exceptions.CommandError:
+                return
+            if player.playlist.entries or player.current_entry:
+                return
+            if not self._check_if_empty(player.voice_client.channel):
+                try:
+                    self.scheduler.remove_job(str(channel.guild.id))
+                except Exception:
+                    pass
+            else:
+                self.scheduler.add_job(
+                    self.disconnect_voice_client,
+                    "date",
+                    run_date=datetime.datetime.now() + self.config.empty_disconnect,
+                    args=[channel.guild],
+                    id=str(channel.guild.id),
+                    replace_existing=True,
+                )
 
         if not self.config.auto_pause:
             return
