@@ -199,6 +199,17 @@ class Config:
         self.self_deafen = config.getboolean(
             "MusicBot", "SelfDeafen", fallback=ConfigDefaults.self_deafen
         )
+        self.leave_inactives = config.getboolean(
+            "MusicBot", "LeaveInactiveVC", fallback=ConfigDefaults.leave_inactiveVC
+        )
+        self.leave_inactiveVCTimeOut = config.getint(
+            "MusicBot",
+            "LeaveInactiveVCTimeOut",
+            fallback=ConfigDefaults.leave_inactiveVCTimeOut,
+        )
+        self.leave_after_song = config.getboolean(
+            "MusicBot", "LeaveAfterSong", fallback=ConfigDefaults.leave_after_song
+        )
         self.searchlist = config.getboolean(
             "MusicBot", "SearchList", fallback=ConfigDefaults.searchlist
         )
@@ -532,6 +543,9 @@ class ConfigDefaults:
     usealias = True
     searchlist = False
     self_deafen = True
+    leave_inactiveVC = False
+    leave_inactiveVCTimeOut = 300
+    leave_after_song = False
     defaultsearchresults = 3
     footer_text = "Just-Some-Bots/MusicBot ({})".format(BOTVERSION)
 

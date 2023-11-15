@@ -116,8 +116,12 @@ class MusicBot(discord.Client):
         # TODO: Do these properly
         ssd_defaults = {
             "last_np_msg": None,
-            "auto_paused": False,
             "availability_paused": False,
+            "auto_paused": False,
+            "timeout_event": (
+                asyncio.Event(),
+                False,
+            ),  # The boolean is going show if the timeout is active or not
         }
         self.server_specific_data = defaultdict(ssd_defaults.copy)
 
@@ -138,6 +142,7 @@ class MusicBot(discord.Client):
                     aiosession=self.session,
                     loop=self.loop,
                 )
+                await self.spotify.get_token()
                 if not self.spotify.token:
                     log.warning("Spotify did not provide us with a token. Disabling.")
                     self.config._spotify = False
@@ -408,11 +413,6 @@ class MusicBot(discord.Client):
         await asyncio.sleep(after)
         await self.safe_delete_message(message, quiet=True)
 
-    # TODO: Check to see if I can just move this to on_message after the response check
-    async def _manual_delete_check(self, message, *, quiet=False):
-        if self.config.delete_invoking:
-            await self.safe_delete_message(message, quiet=quiet)
-
     async def _check_ignore_non_voice(self, msg):
         if msg.guild.me.voice:
             vc = msg.guild.me.voice.channel
@@ -568,7 +568,7 @@ class MusicBot(discord.Client):
         await self.update_now_playing_status(entry)
         player.skip_state.reset()
 
-        # This is the one event where its ok to serialize autoplaylist entries
+        # This is the one event where it's ok to serialize autoplaylist entries
         await self.serialize_queue(player.voice_client.channel.guild)
 
         if self.config.write_current_song:
@@ -611,6 +611,7 @@ class MusicBot(discord.Client):
                     title=entry.title,
                     author=entry.meta["author"].name,
                 )
+
         else:
             # no author (and channel), it's an autoplaylist (or autostream from my other PR) entry.
             newmsg = self.str.get(
@@ -644,10 +645,26 @@ class MusicBot(discord.Client):
                 log.debug("no channel to put now playing message into")
                 return
 
-            # send it in specified channel
-            self.server_specific_data[guild][
-                "last_np_msg"
-            ] = await self.safe_send_message(channel, newmsg)
+        if self.config.embeds:
+            url = player.current_entry.url
+            # Attempt to grab video ID from possible link names
+            match = re.search(
+                r"(?:youtu\.be/|youtube\.com/watch\?v=|youtube\.com/embed/)([\w-]+)",
+                url,
+            )
+
+            if match:
+                videoID = match.group(1)
+            else:
+                log.error("Unkknown link or unable to get video ID.")
+            content = self._gen_embed()
+            content.title = newmsg
+            content.set_image(url=f"https://i1.ytimg.com/vi/{videoID}/hqdefault.jpg")
+
+        # send it in specified channel
+        self.server_specific_data[guild]["last_np_msg"] = await self.safe_send_message(
+            channel, content if self.config.embeds else newmsg, expire_in=30
+        )
 
         # TODO: Check channel voice state?
 
@@ -666,6 +683,10 @@ class MusicBot(discord.Client):
 
     async def on_player_finished_playing(self, player, **_):
         log.debug("Running on_player_finished_playing")
+        if self.config.leave_after_song:
+            guild = player.voice_client.guild
+            if player.playlist.entries.__len__() == 0:
+                await self.disconnect_voice_client(guild)
 
         # delete last_np_msg somewhere if we have cached it
         if self.config.delete_nowplaying:
@@ -1004,11 +1025,13 @@ class MusicBot(discord.Client):
                 )
 
         finally:
-            if msg and expire_in:
-                asyncio.ensure_future(self._wait_delete_msg(msg, expire_in))
-
-            if also_delete and isinstance(also_delete, discord.Message):
-                asyncio.ensure_future(self._wait_delete_msg(also_delete, expire_in))
+            if self.config.delete_messages:
+                if msg and expire_in:
+                    asyncio.ensure_future(self._wait_delete_msg(msg, expire_in))
+                    
+            if self.config.delete_invoking:
+                if also_delete and isinstance(also_delete, discord.Message):
+                    asyncio.ensure_future(self._wait_delete_msg(also_delete, expire_in))
 
         return msg
 
@@ -1057,19 +1080,18 @@ class MusicBot(discord.Client):
 
     async def _cleanup(self):
         try:
-            self.loop.run_until_complete(self.logout())
-            self.loop.run_until_complete(self.session.close())
+            await self.logout()
+            await self.session.close()
         except:
             pass
 
-        pending = asyncio.all_tasks()
-        gathered = asyncio.gather(*pending)
+        pending = asyncio.all_tasks(loop=self.loop)
 
+        for task in pending:
+            task.cancel()
         try:
-            gathered.cancel()
-            self.loop.run_until_complete(gathered)
-            gathered.exception()
-        except:
+            await task
+        except asyncio.CancelledError:
             pass
 
     # noinspection PyMethodOverriding
@@ -1373,6 +1395,53 @@ class MusicBot(discord.Client):
         )
         return e
 
+    @staticmethod
+    def _get_song_url_or_none(url, player):
+        """Return song url if provided or one is currently playing, else returns None"""
+        if url or (
+            player.current_entry
+            and not isinstance(player.current_entry, StreamPlaylistEntry)
+        ):
+            if not url:
+                url = player.current_entry.url
+
+            return url
+
+    def _add_url_to_autoplaylist(self, url):
+        self.autoplaylist.append(url)
+        write_file(self.config.auto_playlist_file, self.autoplaylist)
+        log.debug("Appended {} to autoplaylist".format(url))
+
+    def _remove_url_from_autoplaylist(self, url):
+        self.autoplaylist.remove(url)
+        write_file(self.config.auto_playlist_file, self.autoplaylist)
+        log.debug("Removed {} from autoplaylist".format(url))
+
+    async def handle_timeout(self, guild: discord.Guild):
+        event, active = self.server_specific_data[guild]["timeout_event"]
+
+        self.server_specific_data[guild]["timeout_event"] = (event, True)
+
+        try:
+            log.info(
+                f"Waiting {self.config.leave_inactiveVCTimeOut} seconds to leave the channel {guild.me.voice.channel.name}."
+            )
+            await discord.utils.sane_wait_for(
+                [event.wait()], timeout=self.config.leave_inactiveVCTimeOut
+            )
+        except asyncio.TimeoutError:
+            log.info(f"Timer for {guild.name} has expired. Disconnecting.")
+
+            await self.on_timeout_expired(guild.me.voice.channel)
+        else:
+            log.info(
+                f"{guild.me.voice.channel.name} in {guild.name} is no longer inactive. Cancelling timer."
+            )
+        finally:
+            log.info(f"Cleaning up timer for guild {guild.name}.")
+            self.server_specific_data[guild]["timeout_event"] = (event, False)
+            event.clear()
+
     async def cmd_resetplaylist(self, player, channel):
         """
         Usage:
@@ -1531,38 +1600,64 @@ class MusicBot(discord.Client):
                 delete_after=35,
             )
 
-    async def cmd_save(self, player, url=None):
+    async def cmd_autoplaylist(self, player, option, url=None):
         """
         Usage:
-            {command_prefix}save [url]
+            {command_prefix}autoplaylist [ + | - | add | remove] [url]
 
-        Saves the specified song or current song if not specified to the autoplaylist.
+        Adds or removes the specified song or currently playing song to/from the playlist.
         """
-        if url or (
-            player.current_entry
-            and not isinstance(player.current_entry, StreamPlaylistEntry)
-        ):
-            if not url:
-                url = player.current_entry.url
+        url = self._get_song_url_or_none(url, player)
 
-            if url not in self.autoplaylist:
-                self.autoplaylist.append(url)
-                write_file(self.config.auto_playlist_file, self.autoplaylist)
-                log.debug("Appended {} to autoplaylist".format(url))
-                return Response(
-                    self.str.get(
-                        "cmd-save-success", "Added <{0}> to the autoplaylist."
-                    ).format(url)
-                )
+        if url:
+            if option in ["+", "add"]:
+                if url not in self.autoplaylist:
+                    self._add_url_to_autoplaylist(url)
+                    return Response(
+                        self.str.get(
+                            "cmd-save-success", "Added <{0}> to the autoplaylist."
+                        ).format(url),
+                        delete_after=35,
+                    )
+                else:
+                    raise exceptions.CommandError(
+                        self.str.get(
+                            "cmd-save-exists",
+                            "This song is already in the autoplaylist.",
+                        ),
+                        expire_in=20,
+                    )
+            elif option in ["-", "remove"]:
+                if url in self.autoplaylist:
+                    self._remove_url_from_autoplaylist(url)
+                    return Response(
+                        self.str.get(
+                            "cmd-unsave-success", "Removed <{0}> from the autoplaylist."
+                        ).format(url),
+                        delete_after=35,
+                    )
+                else:
+                    raise exceptions.CommandError(
+                        self.str.get(
+                            "cmd-unsave-does-not-exist",
+                            "This song is not yet in the autoplaylist.",
+                        ),
+                        expire_in=20,
+                    )
             else:
                 raise exceptions.CommandError(
                     self.str.get(
-                        "cmd-save-exists", "This song is already in the autoplaylist."
-                    )
+                        "cmd-autoplaylist-option-invalid",
+                        'Invalid option "{0}" specified, use +, -, add, or remove',
+                    ).format(option),
+                    expire_in=20,
                 )
         else:
             raise exceptions.CommandError(
-                self.str.get("cmd-save-invalid", "There is no valid song playing.")
+                self.str.get(
+                    "cmd-autoplaylist-invalid", "The supplied song link is invalid"
+                ),
+                expire_in=20,
             )
 
     @owner_only
@@ -1696,6 +1791,167 @@ class MusicBot(discord.Client):
             head=True,
         )
 
+    async def cmd_repeat(self, channel, option=None):
+        """
+        Usage:
+            {command_prefix}repeat [all | song]
+
+        Toggles playlist or song looping.
+        If no option is provided the current song will be repeated.
+        If no option is provided and the song is already repeating, repeating will be turned off.
+        """
+
+        player = self.get_player_in(channel.guild)
+        option = option.lower() if option else ""
+
+        if not player:
+            raise exceptions.CommandError(
+                self.str.get(
+                    "cmd-repeat-no-voice",
+                    "The bot is not in a voice channel.  "
+                    "Use %ssummon to summon it to your voice channel.",
+                )
+                % self.config.command_prefix,
+            )
+
+        if not player.current_entry:
+            return Response(
+                self.str.get(
+                    "cmd-repeat-no-songs",
+                    "No songs are queued. Play something with{}play.".format(
+                        self.config.command_prefix
+                    ),
+                ),
+            )
+
+        if option == "all":
+            player.loopqueue = not player.loopqueue
+            if player.loopqueue:
+                return Response(
+                    self.str.get(
+                        "cmd-repeat-playlist-looping", "Playlist is now repeating."
+                    ),
+                    delete_after=30,
+                )
+
+            else:
+                return Response(
+                    self.str.get(
+                        "cmd-repeat-playlist-not-looping",
+                        "Playlist is no longer repeating.",
+                    ),
+                    delete_after=30,
+                )
+
+        elif option == "song":
+            player.repeatsong = not player.repeatsong
+            if player.repeatsong:
+                return Response(
+                    self.str.get("cmd-repeat-song-looping", "Song is now repeating."),
+                    delete_after=30,
+                )
+
+            else:
+                return Response(
+                    self.str.get(
+                        "cmd-repeat-song-not-looping", "Song is no longer repeating."
+                    ),
+                    delete_after=30,
+                )
+        else:
+            if player.repeatsong:
+                player.loopqueue = True
+                player.repeatsong = False
+                return Response(
+                    self.str.get(
+                        "cmd-repeat-noOption-playlist-looping",
+                        "Playlist is now repeating.",
+                    )
+                )
+            elif player.loopqueue:
+                if player.playlist.entries.__len__() > 0:
+                    message = self.str.get(
+                        "cmd-repeat-noOption-playlist-not-looping",
+                        "Playlist is no longer repeating.",
+                    )
+                else:
+                    message = self.str.get(
+                        "cmd-repeat-noOption-song-not-looping",
+                        "Song is no longer repeating.",
+                    )
+                player.loopqueue = False
+            else:
+                player.repeatsong = True
+                message = self.str.get(
+                    "cmd-repeat-noOption-song-looping", "Song is now repeating."
+                )
+
+        return Response(message, delete_after=30)
+
+    async def cmd_move(self, channel, command, leftover_args):
+        """
+        Usage:
+            {command_prefix}move [Index of song to move] [Index to move song to]
+            Ex: !move 1 3
+
+        Swaps the location of a song within the playlist.
+        """
+        player = self.get_player_in(channel.guild)
+        if not player:
+            raise exceptions.CommandError(
+                self.str.get(
+                    "cmd-move-no-voice",
+                    "The bot is not in a voice channel.  "
+                    "Use %ssummon to summon it to your voice channel."
+                    % self.config.command_prefix,
+                )
+            )
+
+        if not player.current_entry:
+            return Response(
+                self.str.get(
+                    "cmd-move-no-songs",
+                    "There are no songs queued. Play something with {}play".format(
+                        self.config.command_prefix
+                    ),
+                ),
+            )
+
+        indexes = []
+        try:
+            indexes.append(int(command) - 1)
+            indexes.append(int(leftover_args[0]) - 1)
+        except:
+            return Response(
+                self.str.get(
+                    "cmd-move-indexes_not_intergers", "Song indexes must be integers!"
+                ),
+                delete_after=30,
+            )
+
+        for i in indexes:
+            if i < 0 or i > player.playlist.entries.__len__() - 1:
+                return Response(
+                    self.str.get(
+                        "cmd-move-invalid-indexes",
+                        "Sent indexes are outside of the playlist scope!",
+                    ),
+                    delete_after=30,
+                )
+
+        await self.safe_send_message(
+            channel,
+            self.str.get(
+                "cmd-move-success",
+                "Successfully moved the requested song from positon number {} in queue to position {}!",
+            ).format(indexes[0] + 1, indexes[1] + 1),
+            expire_in=30,
+        ),
+
+        song = player.playlist.delete_entry_at_index(indexes[0])
+
+        player.playlist.insert_entry_at_index(indexes[1], song)
+
     async def _cmd_play(
         self,
         message,
@@ -1709,7 +1965,7 @@ class MusicBot(discord.Client):
     ):
         player = _player if _player else None
 
-        if permissions.summonplay:
+        if permissions.summonplay and not player:
             voice_channel = author.voice.channel if author.voice else None
             response = await self.cmd_summon(
                 channel, channel.guild, author, voice_channel
@@ -2746,11 +3002,36 @@ class MusicBot(discord.Client):
                     progress=prog_str,
                     url=player.current_entry.url,
                 )
+            if self.config.embeds:
+                url = player.current_entry.url
+                # Attempt to grab video ID from possible link names
+                match = re.search(
+                    r"(?:youtu\.be/|youtube\.com/watch\?v=|youtube\.com/embed/)([\w-]+)",
+                    url,
+                )
+
+                if match:
+                    videoID = match.group(1)
+                else:
+                    log.error("Unknown link or unable to get video ID.")
+
+                np_text = (
+                    np_text.replace("Now ", "")
+                    .replace(action_text, "")
+                    .replace(": ", "", 1)
+                )
+                content = self._gen_embed()
+                content.title = action_text
+                content.add_field(name="** **", value=np_text, inline=True)
+                content.set_image(
+                    url=f"https://i1.ytimg.com/vi/{videoID}/hqdefault.jpg"
+                )
 
             self.server_specific_data[guild][
                 "last_np_msg"
-            ] = await self.safe_send_message(channel, np_text)
-            await self._manual_delete_check(message)
+            ] = await self.safe_send_message(
+                channel, content if self.config.embeds else np_text, expire_in=30
+            )
         else:
             return Response(
                 self.str.get(
@@ -2830,7 +3111,8 @@ class MusicBot(discord.Client):
         return Response(
             self.str.get("cmd-summon-reply", "Connected to `{0.name}`").format(
                 author.voice.channel
-            )
+            ),
+            delete_after=30,
         )
 
     async def cmd_pause(self, player):
@@ -3010,7 +3292,6 @@ class MusicBot(discord.Client):
             index - 1
         ).meta.get("author", None):
             entry = player.playlist.delete_entry_at_index((index - 1))
-            await self._manual_delete_check(message)
             if entry.meta.get("channel", False) and entry.meta.get("author", False):
                 return Response(
                     self.str.get(
@@ -3084,15 +3365,24 @@ class MusicBot(discord.Client):
         force_skip = param.lower() in ["force", "f"]
 
         if permission_force_skip and (force_skip or self.config.legacy_skip):
-            player.skip()  # TODO: check autopause stuff here
-            await self._manual_delete_check(message)
-            return Response(
-                self.str.get("cmd-skip-force", "Force skipped `{}`.").format(
-                    current_entry.title
-                ),
-                reply=True,
-                delete_after=30,
-            )
+            if not permissions.skiplooped and player.repeatsong:
+                raise errors.PermissionsError(
+                    self.str.get(
+                        "cmd-skip-force-noperms-looped-song",
+                        "You do not have permission to force skip a looped song.",
+                    )
+                )
+            else:
+                if player.repeatsong:
+                    player.repeatsong = False
+                player.skip()
+                return Response(
+                    self.str.get("cmd-skip-force", "Force skipped `{}`.").format(
+                        current_entry.title
+                    ),
+                    reply=True,
+                    delete_after=30,
+                )
 
         if not permission_force_skip and force_skip:
             raise exceptions.PermissionsError(
@@ -3127,8 +3417,19 @@ class MusicBot(discord.Client):
         )
 
         if skips_remaining <= 0:
-            player.skip()  # check autopause stuff here
+            if not permissions.skiplooped and player.repeatsong:
+                raise exceptions.PermissionsError(
+                    self.str.get(
+                        "cmd-skip-vote-noperms-looped-song",
+                        "You do not have permission to skip a looped song.",
+                    )
+                )
+            else:
+                if player.repeatsong:
+                    player.repeatsong = False
+            # check autopause stuff here
             # @TheerapakG: Check for pausing state in the player.py make more sense
+            player.skip()
             return Response(
                 self.str.get(
                     "cmd-skip-reply-skipped-1",
@@ -3145,20 +3446,30 @@ class MusicBot(discord.Client):
 
         else:
             # TODO: When a song gets skipped, delete the old x needed to skip messages
-            return Response(
-                self.str.get(
-                    "cmd-skip-reply-voted-1",
-                    "Your skip for `{0}` was acknowledged.\n**{1}** more {2} required to vote to skip this song.",
-                ).format(
-                    current_entry.title,
-                    skips_remaining,
-                    self.str.get("cmd-skip-reply-voted-2", "person is")
-                    if skips_remaining == 1
-                    else self.str.get("cmd-skip-reply-voted-3", "people are"),
-                ),
-                reply=True,
-                delete_after=20,
-            )
+            if not permissions.skiplooped and player.repeatsong:
+                raise exceptions.PermissionsError(
+                    self.str.get(
+                        "cmd-skip-vote-noperms-looped-song",
+                        "You do not have permission to skip a looped song.",
+                    )
+                )
+            else:
+                if player.repeatsong:
+                    player.repeatsong = False
+                return Response(
+                    self.str.get(
+                        "cmd-skip-reply-voted-1",
+                        "Your skip for `{0}` was acknowledged.\n**{1}** more {2} required to vote to skip this song.",
+                    ).format(
+                        current_entry.title,
+                        skips_remaining,
+                        self.str.get("cmd-skip-reply-voted-2", "person is")
+                        if skips_remaining == 1
+                        else self.str.get("cmd-skip-reply-voted-3", "people are"),
+                    ),
+                    reply=True,
+                    delete_after=20,
+                )
 
     async def cmd_volume(self, message, player, new_volume=None):
         """
@@ -3281,7 +3592,6 @@ class MusicBot(discord.Client):
                             )
                         )
                     self.config.auto_playlist = True
-                    await self.on_player_finished_playing(player)
             elif value in bool_n:
                 if not self.config.auto_playlist:
                     raise exceptions.CommandError(
@@ -3503,7 +3813,7 @@ class MusicBot(discord.Client):
                 "youtube": lambda d: "https://www.youtube.com/watch?v=%s" % d["id"],
                 "soundcloud": lambda d: d["url"],
                 "bandcamp": lambda d: d["url"],
-            }
+            },
         )
 
         exfunc = linegens[info["extractor"].split(":")[0]]
@@ -4166,9 +4476,73 @@ class MusicBot(discord.Client):
                         "{}{}".format(self.config.command_prefix, command_name)
                     )
 
+    async def on_timeout_expired(self, voice_channel):
+        guild = voice_channel.guild
+
+        if voice_channel:
+            try:
+                last_np_msg = self.server_specific_data[guild]["last_np_msg"]
+                channel = last_np_msg.channel
+                if self.config.embeds:
+                    embed = self._gen_embed()
+                    embed.title = "Leaving voice channel"
+                    embed.description = f"Leaving voice channel {voice_channel.name} in {voice_channel.guild} due to inactivity."
+                    await self.safe_send_message(channel, embed, expire_in=30)
+                else:
+                    await self.safe_send_message(
+                        channel,
+                        f"Leaving voice channel {voice_channel.name} in {voice_channel.guild} due to inactivity.",
+                        expire_in=30,
+                    )
+            except Exception as e:
+                log.info(
+                    f"Leaving voice channel {voice_channel.name} in {voice_channel.guild} due to inactivity."
+                )
+            await self.disconnect_voice_client(guild)
+
     async def on_voice_state_update(self, member, before, after):
         if not self.init_ok:
             return  # Ignore stuff before ready
+
+        if self.config.leave_inactives:
+            guild = member.guild
+            event, active = self.server_specific_data[guild]["timeout_event"]
+
+            if before.channel and self.user in before.channel.members:
+                if str(before.channel.id) in str(self.config.autojoin_channels):
+                    log.info(
+                        f"Ignoring {before.channel.name} in {before.channel.guild} as it is a binded voice channel."
+                    )
+
+                elif not any(not user.bot for user in before.channel.members):
+                    log.info(
+                        f"{before.channel.name} has been detected as empty. Handling timeouts."
+                    )
+                    await self.handle_timeout(guild)
+            elif after.channel and member != self.user:
+                if self.user in after.channel.members:
+                    if (
+                        active
+                    ):  # Added to not spam the console with the message for every person that joins
+                        log.info(
+                            f"A user joined {after.channel.name}, cancelling timer."
+                        )
+                    event.set()
+
+            if (
+                member == self.user and before.channel and after.channel
+            ):  # bot got moved from channel to channel
+                if not any(not user.bot for user in after.channel.members):
+                    log.info(
+                        f"The bot got moved and the voice channel {after.channel.name} is empty. Handling timeouts."
+                    )
+                    await self.handle_timeout(guild)
+                else:
+                    if active:
+                        log.info(
+                            f"The bot got moved and the voice channel {after.channel.name} is not empty."
+                        )
+                        event.set()
 
         if before.channel:
             channel = before.channel
