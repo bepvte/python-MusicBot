@@ -8,6 +8,7 @@ import datetime
 
 from .exceptions import HelpfulError
 from .constants import VERSION as BOTVERSION
+from .utils import format_size_to_bytes
 
 log = logging.getLogger(__name__)
 
@@ -120,6 +121,12 @@ class Config:
         self.save_videos = config.getboolean(
             "MusicBot", "SaveVideos", fallback=ConfigDefaults.save_videos
         )
+        self.storage_limit_bytes = config.get(
+            "MusicBot", "StorageLimitBytes", fallback=ConfigDefaults.storage_limit_bytes
+        )
+        self.storage_limit_days = config.getint(
+            "MusicBot", "StorageLimitDays", fallback=ConfigDefaults.storage_limit_days
+        )
         self.now_playing_mentions = config.getboolean(
             "MusicBot",
             "NowPlayingMentions",
@@ -217,6 +224,12 @@ class Config:
             "MusicBot",
             "DefaultSearchResults",
             fallback=ConfigDefaults.defaultsearchresults,
+        )
+
+        self.round_robin_queue = config.getboolean(
+            "MusicBot",
+            "RoundRobinQueue",
+            fallback=ConfigDefaults.defaultround_robin_queue,
         )
 
         self.debug_level = config.get(
@@ -402,6 +415,19 @@ class Config:
         if not self.footer_text:
             self.footer_text = ConfigDefaults.footer_text
 
+        if self.storage_limit_bytes:
+            try:
+                self.storage_limit_bytes = format_size_to_bytes(
+                    self.storage_limit_bytes
+                )
+            except ValueError:
+                log.exception(
+                    "StorageLimitBytes has invalid config value '{}' using default instead.".format(
+                        self.storage_limit_bytes,
+                    ),
+                )
+                self.storage_limit_bytes = ConfigDefaults.storage_limit_bytes
+
     # TODO: Add save function for future editing of options with commands
     #       Maybe add warnings about fields missing from the config file
 
@@ -520,6 +546,8 @@ class ConfigDefaults:
     skips_required = 4
     skip_ratio_required = 0.5
     save_videos = True
+    storage_limit_bytes = 0
+    storage_limit_days = 0
     now_playing_mentions = False
     auto_summon = True
     auto_playlist = True
@@ -548,6 +576,7 @@ class ConfigDefaults:
     leave_after_song = False
     defaultsearchresults = 3
     footer_text = "Just-Some-Bots/MusicBot ({})".format(BOTVERSION)
+    defaultround_robin_queue = False
 
     options_file = "config/options.ini"
     blacklist_file = "config/blacklist.txt"
