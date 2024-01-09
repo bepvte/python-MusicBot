@@ -13,14 +13,12 @@ import ssl
 import sys
 import time
 import traceback
-import datetime
 from collections import defaultdict
 from datetime import timedelta
 from functools import wraps
 from io import BytesIO, StringIO
 from textwrap import dedent
 from typing import Optional
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import aiohttp
 import colorlog
@@ -99,9 +97,6 @@ class MusicBot(discord.Client):
         self.downloader = downloader.Downloader(
             download_folder=self.config.audio_cache_path
         )
-
-        self.scheduler = AsyncIOScheduler()
-        self.scheduler.start()
 
         log.info("Starting MusicBot {}".format(BOTVERSION))
 
@@ -5133,136 +5128,14 @@ class MusicBot(discord.Client):
             await self.disconnect_voice_client(before.channel.guild)
             return
 
-        if self.config.empty_disconnect:
-            try:
-                player = await self.get_player(channel)
-            except exceptions.CommandError:
-                return
-            if player.playlist.entries or player.current_entry:
-                return
-            if not self._check_if_empty(player.voice_client.channel):
-                try:
-                    self.scheduler.remove_job(str(channel.guild.id))
-                except Exception:
-                    pass
-            else:
-                self.scheduler.add_job(
-                    self.disconnect_voice_client,
-                    "date",
-                    run_date=datetime.datetime.now() + self.config.empty_disconnect,
-                    args=[channel.guild],
-                    id=str(channel.guild.id),
-                    replace_existing=True,
-                )
-
-        if not self.config.auto_pause:
-            return
-
-        autopause_msg = "{state} in {channel.guild.name}/{channel.name} {reason}"
-
-        auto_paused = self.server_specific_data[channel.guild.id]["auto_paused"]
-
-        try:
-            player = await self.get_player(channel)
-        except exceptions.CommandError:
-            return
-
-        def is_active(member):
-            if not member.voice:
-                return False
-
-            if any([member.voice.deaf, member.voice.self_deaf, member.bot]):
-                return False
-
-            return True
-
-        if not member == self.user and is_active(member):  # if the user is not inactive
-            if (
-                player.voice_client.channel != before.channel
-                and player.voice_client.channel == after.channel
-            ):  # if the person joined
-                if auto_paused and player.is_paused:
-                    log.info(
-                        autopause_msg.format(
-                            state="Unpausing",
-                            channel=player.voice_client.channel,
-                            reason="",
-                        ).strip()
-                    )
-
-                    self.server_specific_data[player.voice_client.guild.id][
-                        "auto_paused"
-                    ] = False
-                    player.resume()
-            elif (
-                player.voice_client.channel == before.channel
-                and player.voice_client.channel != after.channel
-            ):
-                if not any(
-                    is_active(m) for m in player.voice_client.channel.members
-                ):  # channel is empty
-                    if not auto_paused and player.is_playing:
-                        log.info(
-                            autopause_msg.format(
-                                state="Pausing",
-                                channel=player.voice_client.channel,
-                                reason="(empty channel)",
-                            ).strip()
-                        )
-
-                        self.server_specific_data[player.voice_client.guild.id][
-                            "auto_paused"
-                        ] = True
-                        player.pause()
-            elif (
-                player.voice_client.channel == before.channel
-                and player.voice_client.channel == after.channel
-            ):  # if the person undeafen
-                if auto_paused and player.is_paused:
-                    log.info(
-                        autopause_msg.format(
-                            state="Unpausing",
-                            channel=player.voice_client.channel,
-                            reason="(member undeafen)",
-                        ).strip()
-                    )
-
-                    self.server_specific_data[player.voice_client.guild.id][
-                        "auto_paused"
-                    ] = False
-                    player.resume()
-        else:
-            if any(
-                is_active(m) for m in player.voice_client.channel.members
-            ):  # channel is not empty
-                if auto_paused and player.is_paused:
-                    log.info(
-                        autopause_msg.format(
-                            state="Unpausing",
-                            channel=player.voice_client.channel,
-                            reason="",
-                        ).strip()
-                    )
-
-                    self.server_specific_data[player.voice_client.guild.id][
-                        "auto_paused"
-                    ] = False
-                    player.resume()
-
-            else:
-                if not auto_paused and player.is_playing:
-                    log.info(
-                        autopause_msg.format(
-                            state="Pausing",
-                            channel=player.voice_client.channel,
-                            reason="(empty channel or member deafened)",
-                        ).strip()
-                    )
-
-                    self.server_specific_data[player.voice_client.guild.id][
-                        "auto_paused"
-                    ] = True
-                    player.pause()
+        if before.channel:
+            player = self.get_player_in(before.channel.guild)
+            if player:
+                self._handle_guild_auto_pause(player)
+        if after.channel:
+            player = self.get_player_in(after.channel.guild)
+            if player:
+                self._handle_guild_auto_pause(player)
 
     async def on_guild_update(self, before: discord.Guild, after: discord.Guild):
         if before.region != after.region:

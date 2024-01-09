@@ -4,4 +4,3 @@ pip
 yt-dlp
 colorlog
 cffi --only-binary all; sys_platform == 'win32'
-APScheduler==3.10.*
