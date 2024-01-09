@@ -602,6 +602,7 @@ class ConfigDefaults:
     bound_channels = set()
     unbound_servers = False
     autojoin_channels = set()
+    disconnect_on_restart = False
     dm_nowplaying = False
     no_nowplaying_auto = False
     nowplaying_channels = set()
