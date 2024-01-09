@@ -48,21 +48,17 @@ from .utils import (
     ftimedelta,
     _func_,
     _get_variable,
+    is_empty_voice_channel,
     format_song_duration,
     format_size_from_bytes,
 )
 
-load_opus_lib()
-
 log = logging.getLogger(__name__)
-
-intents = discord.Intents.all()
-intents.typing = False
-intents.presences = False
 
 
 class MusicBot(discord.Client):
     def __init__(self, config_file=None, perms_file=None, aliases_file=None):
+        load_opus_lib()
         try:
             sys.stdout.write("\x1b]2;MusicBot {}\x07".format(BOTVERSION))
         except Exception:
@@ -140,6 +136,9 @@ class MusicBot(discord.Client):
         }
         self.server_specific_data = defaultdict(ssd_defaults.copy)
 
+        intents = discord.Intents.all()
+        intents.typing = False
+        intents.presences = False
         super().__init__(intents=intents)
 
     async def _doBotInit(self, use_certifi: bool = False):
@@ -329,15 +328,6 @@ class MusicBot(discord.Client):
         joined_servers = set()
         channel_map = {c.guild: c for c in channels}
 
-        def _autopause(player):
-            if self._check_if_empty(player.voice_client.channel):
-                log.info("Initial autopause in empty channel")
-
-                player.pause()
-                self.server_specific_data[player.voice_client.channel.guild.id][
-                    "auto_paused"
-                ] = True
-
         for guild in self.guilds:
             if guild.unavailable or guild in channel_map:
                 continue
@@ -397,8 +387,6 @@ class MusicBot(discord.Client):
                         player.play()
 
                     if self.config.auto_playlist:
-                        if self.config.auto_pause:
-                            player.once("play", lambda player, **_: _autopause(player))
                         if not player.playlist.entries:
                             await self.on_player_finished_playing(player)
 
@@ -421,7 +409,8 @@ class MusicBot(discord.Client):
 
     async def _wait_delete_msg(self, message, after):
         await asyncio.sleep(after)
-        await self.safe_delete_message(message, quiet=True)
+        if not self.is_closed():
+            await self.safe_delete_message(message, quiet=True)
 
     async def _check_ignore_non_voice(self, msg):
         if msg.guild.me.voice:
@@ -634,6 +623,7 @@ class MusicBot(discord.Client):
 
     async def on_player_play(self, player, entry):
         log.debug("Running on_player_play")
+        self._handle_guild_auto_pause(player)
         await self.reset_player_inactivity(player)
         await self.update_now_playing_status()
         # manage the cache since we may have downloaded something.
@@ -783,27 +773,6 @@ class MusicBot(discord.Client):
             if last_np_msg:
                 await self.safe_delete_message(last_np_msg)
 
-        def _autopause(player):
-            if self._check_if_empty(player.voice_client.channel):
-                log.info("Player finished playing, autopaused in empty channel")
-
-                player.pause()
-                self.server_specific_data[player.voice_client.channel.guild.id][
-                    "auto_paused"
-                ] = True
-
-        if self.config.empty_disconnect and self._check_if_empty(
-            player.voice_client.channel
-        ):
-            log.debug("Started timer to leave %s", player.voice_client.channel)
-            self.scheduler.add_job(
-                self.disconnect_voice_client,
-                "date",
-                run_date=datetime.datetime.now() + self.config.empty_disconnect,
-                args=[player.voice_client.guild],
-                id=str(player.voice_client.guild.id),
-                replace_existing=True,
-            )
         if (
             not player.playlist.entries
             and not player.current_entry
@@ -869,9 +838,6 @@ class MusicBot(discord.Client):
 
                 # Do I check the initial conditions again?
                 # not (not player.playlist.entries and not player.current_entry and self.config.auto_playlist)
-
-                if self.config.auto_pause:
-                    player.once("play", lambda player, **_: _autopause(player))
 
                 try:
                     await player.playlist.add_entry(
@@ -1097,13 +1063,11 @@ class MusicBot(discord.Client):
 
     def _get_guild_cmd_prefix(self, guild: discord.Guild):
         if self.config.enable_options_per_guild:
-            prefix = self.server_specific_data[guild.id]["command_prefix"]
-            if not prefix:
-                return self.config.command_prefix
-            else:
-                return prefix
-        else:
-            return self.config.command_prefix
+            if guild:
+                prefix = self.server_specific_data[guild.id]["command_prefix"]
+                if prefix:
+                    return prefix
+        return self.config.command_prefix
 
     #######################################################################################################################
 
@@ -1189,28 +1153,36 @@ class MusicBot(discord.Client):
                 lfunc("Sending message instead")
                 return await self.safe_send_message(message.channel, new)
 
-    async def restart(self):
-        self.exit_signal = exceptions.RestartSignal()
-        await self.close()
-
-    def restart_threadsafe(self):
-        asyncio.run_coroutine_threadsafe(self.restart(), self.loop)
-
     async def _cleanup(self):
-        try:
+        try:  # make sure discord.Client is closed.
             await self.close()  # changed in d.py 2.0
         except Exception:
-            log.exception("Issue while closing discord client connection.")
+            log.exception("Issue while closing discord client session.")
             pass
-        try:
+
+        try:  # make sure discord.http.connector is closed.
+            # This may be a bug in aiohttp or within discord.py handling of it.
+            # Have read aiohttp 4.x is supposed to fix this, but have not verified.
+            if self.http.connector:
+                await self.http.connector.close()
+        except Exception:
+            log.exception("Issue while closing discord aiohttp connector.")
+            pass
+
+        try:  # make sure our aiohttp session is closed.
             await self.session.close()
         except Exception:
-            log.exception("Issue while cleaning up aiohttp session.")
+            log.exception("Issue while closing our aiohttp session.")
             pass
 
-        pending = asyncio.all_tasks(loop=self.loop)
+        # now cancel all pending tasks, except for run.py::main()
+        for task in asyncio.all_tasks(loop=self.loop):
+            if (
+                task.get_coro().__name__ == "main"
+                and task.get_name().lower() == "task-1"
+            ):
+                continue
 
-        for task in pending:
             task.cancel()
             try:
                 await task
@@ -1253,7 +1225,7 @@ class MusicBot(discord.Client):
             await self.logout()
 
         elif issubclass(ex_type, exceptions.Signal):
-            self.exit_signal = ex_type
+            self.exit_signal = ex
             await self.logout()
 
         else:
@@ -1987,6 +1959,52 @@ class MusicBot(discord.Client):
             )
         return True
 
+    def _handle_guild_auto_pause(self, player: MusicPlayer):
+        """
+        function to handle guild activity pausing and unpausing.
+        """
+        if not self.config.auto_pause:
+            return
+
+        if not player.voice_client:
+            return
+
+        channel = player.voice_client.channel
+
+        guild = channel.guild
+        auto_paused = self.server_specific_data[guild.id]["auto_paused"]
+
+        if is_empty_voice_channel(channel) and not auto_paused and player.is_playing:
+            log.info(
+                f"Playing in an empty voice channel, running auto pause for guild: {guild}"
+            )
+            player.pause()
+            self.server_specific_data[guild.id]["auto_paused"] = True
+
+        elif not is_empty_voice_channel(channel) and auto_paused and player.is_paused:
+            log.info(f"Previously auto paused player is unpausing for guild: {guild}")
+            player.resume()
+            self.server_specific_data[guild.id]["auto_paused"] = False
+
+    async def _do_cmd_unpause_check(
+        self, player: MusicPlayer, channel: discord.abc.GuildChannel
+    ):
+        """
+        Checks for paused player and resumes it while sending a notice.
+
+        This function should not be called from _cmd_play().
+        """
+        if player and player.is_paused:
+            await self.safe_send_message(
+                channel,
+                self.str.get(
+                    "cmd-unpause-check",
+                    "Bot was previously paused, resuming playback now.",
+                ),
+                expire_in=30,
+            )
+            player.resume()
+
     async def cmd_play(
         self, message, _player, channel, author, permissions, leftover_args, song_url
     ):
@@ -2003,6 +2021,7 @@ class MusicBot(discord.Client):
         it will use the metadata (e.g song name and artist) to find a YouTube
         equivalent of the song. Streaming from Spotify is not possible.
         """
+        await self._do_cmd_unpause_check(_player, channel)
 
         return await self._cmd_play(
             message,
@@ -2013,38 +2032,6 @@ class MusicBot(discord.Client):
             leftover_args,
             song_url,
             head=False,
-        )
-
-    async def cmd_shuffleplay(
-        self, message, _player, channel, author, permissions, leftover_args, song_url
-    ):
-        """
-        Usage:
-            {command_prefix}shuffleplay playlist_link
-        Adds a playlist to be shhuffled then played. Shorthand for doing {command_prefix}play and then {command_prefix}shuffle
-        If nothing is playing, then the first few songs will be played in order while the rest of the playlist downloads.
-        """
-        # TO-DO, don't play the first few songs so the entire playlist can be shuffled
-        # In my test run it's only 2-3 songs that get played in the order this is because of how the _cmd_play works.
-        player = self.get_player_in(channel.guild)
-
-        await self._cmd_play(
-            message,
-            _player,
-            channel,
-            author,
-            permissions,
-            leftover_args,
-            song_url,
-            head=False,
-        )
-
-        player.playlist.shuffle()
-        return Response(
-            self.str.get("cmd-shuffleplay-shuffled", "Shuffled {0}'s playlist").format(
-                message.guild
-            ),
-            delete_after=30,
         )
 
     async def cmd_playnext(
@@ -2063,6 +2050,7 @@ class MusicBot(discord.Client):
         it will use the metadata (e.g song name and artist) to find a YouTube
         equivalent of the song. Streaming from Spotify is not possible.
         """
+        await self._do_cmd_unpause_check(_player, channel)
 
         return await self._cmd_play(
             message,
@@ -2909,6 +2897,8 @@ class MusicBot(discord.Client):
         streams, especially on poor connections.  You have been warned.
         """
 
+        await self._do_cmd_unpause_check(_player, channel)
+
         if _player:
             player = _player
         elif permissions.summonplay:
@@ -3714,7 +3704,6 @@ class MusicBot(discord.Client):
                 and not permissions.skiplooped
                 and player.repeatsong
             ):
-                
                 raise exceptions.PermissionsError(
                     self.str.get(
                         "cmd-skip-force-noperms-looped-song",
@@ -3742,9 +3731,6 @@ class MusicBot(discord.Client):
                 expire_in=30,
             )
 
-        # TODO: ignore person if they're deaf or take them out of the list or something?
-        # Currently is recounted if they vote, deafen, then vote
-
         num_voice = sum(
             1
             for m in voice_channel.members
@@ -3753,7 +3739,13 @@ class MusicBot(discord.Client):
         if num_voice == 0:
             num_voice = 1  # incase all users are deafened, to avoid divison by zero
 
-        num_skips = player.skip_state.add_skipper(author.id, message)
+        player.skip_state.add_skipper(author.id, message)
+        num_skips = sum(
+            1
+            for m in voice_channel.members
+            if not (m.voice.deaf or m.voice.self_deaf or m == self.user)
+            and m.id in player.skip_state.skippers
+        )
 
         skips_remaining = (
             min(
@@ -4542,27 +4534,98 @@ class MusicBot(discord.Client):
         await self.disconnect_voice_client(guild)
         return Response("Disconnected from `{0.name}`".format(guild), delete_after=20)
 
-    async def cmd_restart(self, channel):
+    async def cmd_restart(self, _player, channel, leftover_args, opt="soft"):
         """
         Usage:
-            {command_prefix}restart
+            {command_prefix}restart [soft|full|upgrade|upgit|uppip]
 
-        Restarts the bot.
-        Will not properly load new dependencies or file updates unless fully shutdown
-        and restarted.
+        Restarts the bot, uses soft restart by default.
+        `soft` reloads config without reloading bot code.
+        `full` restart reloading source code and configs.
+        `uppip` upgrade pip packages then fully restarts.
+        `upgit` upgrade bot with git then fully restarts.
+        `upgrade` upgrade bot and packages then restarts.
         """
-        await self.safe_send_message(
-            channel,
-            "\N{WAVING HAND SIGN} Restarting. If you have updated your bot "
-            "or its dependencies, you need to restart the bot properly, rather than using this command.",
-        )
+        opt = opt.strip().lower()
+        if opt not in ["soft", "full", "upgrade", "uppip", "upgit"]:
+            raise exceptions.CommandError(
+                self.str.get(
+                    "cmd-restart-invalid-arg",
+                    "Invalid option given, use: soft, full, upgrade, uppip, or upgit",
+                ),
+                expire_in=30,
+            )
+        elif opt == "soft":
+            await self.safe_send_message(
+                channel,
+                self.str.get(
+                    "cmd-restart-soft",
+                    "{emoji} Restarting current instance...",
+                ).format(
+                    emoji="\u21A9\uFE0F",  # Right arrow curving left
+                ),
+            )
+        elif opt == "full":
+            await self.safe_send_message(
+                channel,
+                self.str.get(
+                    "cmd-restart-full",
+                    "{emoji} Restarting bot process...",
+                ).format(
+                    emoji="\U0001F504",  # counterclockwise arrows
+                ),
+            )
+        elif opt == "uppip":
+            await self.safe_send_message(
+                channel,
+                self.str.get(
+                    "cmd-restart-uppip",
+                    "{emoji} Will try to upgrade required pip packages and restart the bot...",
+                ).format(
+                    emoji="\U0001F4E6",  # package / box
+                ),
+            )
+        elif opt == "upgit":
+            await self.safe_send_message(
+                channel,
+                self.str.get(
+                    "cmd-restart-upgit",
+                    "{emoji} Will try to update bot code with git and restart the bot...",
+                ).format(
+                    emoji="\U0001F5C3\uFE0F",  # card box
+                ),
+            )
+        elif opt == "upgrade":
+            await self.safe_send_message(
+                channel,
+                self.str.get(
+                    "cmd-restart-upgrade",
+                    "{emoji} Will try to upgrade everything and restart the bot...",
+                ).format(
+                    emoji="\U0001F310",  # globe with meridians
+                ),
+            )
 
-        player = self.get_player_in(channel.guild)
-        if player and player.is_paused:
-            player.resume()
+        if _player and _player.is_paused:
+            _player.resume()
 
         await self.disconnect_all_voice_clients()
-        raise exceptions.RestartSignal()
+        if opt == "soft":
+            raise exceptions.RestartSignal(code=exceptions.RestartCode.RESTART_SOFT)
+        elif opt == "full":
+            raise exceptions.RestartSignal(code=exceptions.RestartCode.RESTART_FULL)
+        elif opt == "upgrade":
+            raise exceptions.RestartSignal(
+                code=exceptions.RestartCode.RESTART_UPGRADE_ALL
+            )
+        elif opt == "uppip":
+            raise exceptions.RestartSignal(
+                code=exceptions.RestartCode.RESTART_UPGRADE_PIP
+            )
+        elif opt == "upgit":
+            raise exceptions.RestartSignal(
+                code=exceptions.RestartCode.RESTART_UPGRADE_GIT
+            )
 
     async def cmd_shutdown(self, channel):
         """
@@ -5015,7 +5078,12 @@ class MusicBot(discord.Client):
                 )
             await self.disconnect_voice_client(guild)
 
-    async def on_voice_state_update(self, member, before, after):
+    async def on_voice_state_update(
+        self,
+        member: discord.Member,
+        before: discord.VoiceState,
+        after: discord.VoiceState,
+    ):
         if not self.init_ok:
             return  # Ignore stuff before ready
 
@@ -5058,13 +5126,6 @@ class MusicBot(discord.Client):
                             f"The bot got moved and the voice channel {after.channel.name} is not empty."
                         )
                         event.set()
-
-        if before.channel:
-            channel = before.channel
-        elif after.channel:
-            channel = after.channel
-        else:
-            return
 
         if (
             member == self.user and not after.channel
@@ -5257,6 +5318,9 @@ class MusicBot(discord.Client):
                 player.resume()
 
     async def on_guild_unavailable(self, guild: discord.Guild):
+        if not self.init_ok:
+            return  # Ignore pre-ready events.
+
         log.debug('Guild "{}" has become unavailable.'.format(guild.name))
 
         player = self.get_player_in(guild)
