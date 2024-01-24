@@ -5135,7 +5135,7 @@ class MusicBot(discord.Client):
 
         if self.config.empty_disconnect:
             try:
-                player = await self.get_player(channel)
+                player = await self.get_player(after.channel)
             except exceptions.CommandError:
                 return
             if player.playlist.entries or player.current_entry:
