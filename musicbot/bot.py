@@ -5135,14 +5135,14 @@ class MusicBot(discord.Client):
 
         if self.config.empty_disconnect:
             try:
-                player = await self.get_player(after.channel)
+                player = await self.get_player(before.channel)
             except exceptions.CommandError:
                 return
             if player.playlist.entries or player.current_entry:
                 return
             if not self._check_if_empty(player.voice_client.channel):
                 try:
-                    self.scheduler.remove_job(str(channel.guild.id))
+                    self.scheduler.remove_job(str(before.channel.guild.id))
                 except Exception:
                     pass
             else:
