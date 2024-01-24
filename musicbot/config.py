@@ -5,6 +5,7 @@ import codecs
 import shutil
 import logging
 import configparser
+import datetime
 
 from .exceptions import HelpfulError
 from .constants import VERSION as BOTVERSION
@@ -151,6 +152,12 @@ class Config:
         self.auto_pause = config.getboolean(
             "MusicBot", "AutoPause", fallback=ConfigDefaults.auto_pause
         )
+        self.empty_disconnect = config.get(
+            "MusicBot", "EmptyDisconnect", fallback=ConfigDefaults.empty_disconnect
+        )
+        log.info("going %s", self.empty_disconnect)
+        if self.empty_disconnect:
+            self.empty_disconnect = datetime.timedelta(seconds=int(self.empty_disconnect))
         self.delete_messages = config.getboolean(
             "MusicBot", "DeleteMessages", fallback=ConfigDefaults.delete_messages
         )
