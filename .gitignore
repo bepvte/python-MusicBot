@@ -18,5 +18,5 @@ config/whitelist.txt
 config/blacklist.txt
 
 docker-compose.yml
+
 venv
-config/autoplaylist.cachemap.json

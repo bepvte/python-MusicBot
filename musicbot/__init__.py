@@ -1,3 +1,5 @@
+import sys
+import inspect
 import logging
 from .bot import MusicBot
 from .constructs import BetterLogRecord
@@ -5,6 +7,12 @@ from .constructs import BetterLogRecord
 __all__ = ["MusicBot"]
 
 logging.setLogRecordFactory(BetterLogRecord)
+
+_func_prototype = (
+    "def {logger_func_name}(self, message, *args, **kwargs):\n"
+    "    if self.isEnabledFor({levelname}):\n"
+    "        self._log({levelname}, message, args, **kwargs)"
+)
 
 
 def _add_logger_level(levelname, level, *, func_name=None):
@@ -17,11 +25,6 @@ def _add_logger_level(levelname, level, *, func_name=None):
     :type func_name: str
         The name of the logger function to log to a level, e.g. "info" for log.info(...)
     """
-    _func_prototype = (
-        "def {logger_func_name}(self, message, *args, **kwargs):\n"
-        "    if self.isEnabledFor({levelname}):\n"
-        "        self._log({levelname}, message, args, **kwargs)"
-    )
 
     func_name = func_name or levelname.lower()
 
@@ -54,5 +57,6 @@ fhandler.setFormatter(
 )
 log.addHandler(fhandler)
 
+del _func_prototype
 del _add_logger_level
 del fhandler

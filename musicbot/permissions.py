@@ -51,7 +51,7 @@ class Permissive:
 
     AllowPlaylists = True
     InstaSkip = True
-    SkipLooped = True
+    SkipLooped = False
     Remove = True
     SkipWhenAbsent = False
     BypassKaraokeMode = True
@@ -133,7 +133,7 @@ class Permissions:
                 return group
 
         # The only way I could search for roles is if I add a `server=None` param and pass that too
-        if isinstance(user, discord.User):
+        if type(user) == discord.User:
             return self.default_group
 
         # We loop again so that we don't return a role based group before we find an assigned one
@@ -225,22 +225,22 @@ class PermissionGroup:
 
         try:
             self.max_songs = max(0, int(self.max_songs))
-        except ValueError:
+        except:
             self.max_songs = PermissionsDefaults.MaxSongs
 
         try:
             self.max_song_length = max(0, int(self.max_song_length))
-        except ValueError:
+        except:
             self.max_song_length = PermissionsDefaults.MaxSongLength
 
         try:
             self.max_playlist_length = max(0, int(self.max_playlist_length))
-        except ValueError:
+        except:
             self.max_playlist_length = PermissionsDefaults.MaxPlaylistLength
 
         try:
             self.max_search_items = max(0, int(self.max_search_items))
-        except ValueError:
+        except:
             self.max_search_items = PermissionsDefaults.MaxSearchItems
 
         if int(self.max_search_items) > 100:

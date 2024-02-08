@@ -25,6 +25,6 @@ class Json:
         try:
             data = self.data[item]
         except KeyError:
-            log.warning(f"Could not grab data from i18n key {item}.")
+            log.warning("Could not grab data from i18n key {0}.".format(item, fallback))
             data = fallback
         return data

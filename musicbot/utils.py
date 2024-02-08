@@ -1,16 +1,10 @@
-import re
 import sys
 import logging
 import aiohttp
 import inspect
-import typing
 
-from typing import Union
 from hashlib import md5
 from .constants import DISCORD_MSG_CHAR_LIMIT
-
-if typing.TYPE_CHECKING:
-    from discord import VoiceChannel
 
 log = logging.getLogger(__name__)
 
@@ -45,9 +39,9 @@ def paginate(content, *, length=DISCORD_MSG_CHAR_LIMIT, reserve=0):
     """
     Split up a large string or list of strings into chunks for sending to discord.
     """
-    if isinstance(content, str):
+    if type(content) == str:
         contentlist = content.split("\n")
-    elif isinstance(content, list):
+    elif type(content) == list:
         contentlist = content
     else:
         raise ValueError("Content must be str or list, not %s" % type(content))
@@ -104,21 +98,21 @@ def objdiff(obj1, obj2, *, access_attr=None, depth=0):
     changes = {}
 
     if access_attr is None:
-        attrdir = lambda x: x  # noqa: E731
+        attrdir = lambda x: x
 
     elif access_attr == "auto":
         if hasattr(obj1, "__slots__") and hasattr(obj2, "__slots__"):
-            attrdir = lambda x: getattr(x, "__slots__")  # noqa: E731
+            attrdir = lambda x: getattr(x, "__slots__")
 
         elif hasattr(obj1, "__dict__") and hasattr(obj2, "__dict__"):
-            attrdir = lambda x: getattr(x, "__dict__")  # noqa: E731
+            attrdir = lambda x: getattr(x, "__dict__")
 
         else:
             # log.everything("{}{} or {} has no slots or dict".format('-' * (depth+1), repr(obj1), repr(obj2)))
             attrdir = dir
 
     elif isinstance(access_attr, str):
-        attrdir = lambda x: list(getattr(x, access_attr))  # noqa: E731
+        attrdir = lambda x: list(getattr(x, access_attr))
 
     else:
         attrdir = dir
@@ -175,28 +169,6 @@ def _get_variable(name):
                 del frame
     finally:
         del stack
-
-
-def is_empty_voice_channel(
-    voice_channel: "VoiceChannel", *, exclude_me: bool = True, exclude_deaf: bool = True
-) -> bool:
-    def _check(member):
-        if exclude_me and member == voice_channel.guild.me:
-            return False
-
-        if (
-            member.voice
-            and exclude_deaf
-            and any([member.voice.deaf, member.voice.self_deaf])
-        ):
-            return False
-
-        if member.bot:
-            return False
-
-        return True
-
-    return not sum(1 for m in voice_channel.members if _check(m))
 
 
 def format_song_duration(ftd):
@@ -271,38 +243,3 @@ def format_size_to_bytes(size_str: str, strict_si=False) -> int:
         elif size_str.endswith("byte"):
             size_str = size_str[0:-4]
     return int(size_str)
-
-
-def format_time_to_seconds(time_str: Union[str, int]) -> int:
-    """Convert a phrase containing time duration(s) to seconds as int
-    This function allows for intresting/sloppy time notations like:
-    - 1yearand2seconds  = 31556954
-    - 8s 1d             = 86408
-    - .5 hours          = 1800
-    - 99 + 1            = 100
-    - 3600              = 3600
-    Only partial seconds are not supported, thus ".5s + 1.5s" will be 1 not 2.
-
-    Param `time_str` is assumed to contain a time duration as str or int.
-    Returns 0 if no time value is recognised, rather than raise a ValueError.
-    """
-    if isinstance(time_str, int):
-        return time_str
-
-    # TODO: find a good way to make this i18n friendly.
-    time_lex = re.compile(r"(\d*\.?\d+)\s*(y|d|h|m|s)?", re.I)
-    unit_seconds = {
-        "y": 31556952,
-        "d": 86400,
-        "h": 3600,
-        "m": 60,
-        "s": 1,
-    }
-    total_sec = 0
-    for value, unit in time_lex.findall(time_str):
-        if not unit:
-            unit = "s"
-        else:
-            unit = unit[0].lower().strip()
-        total_sec += int(float(value) * unit_seconds[unit])
-    return total_sec
