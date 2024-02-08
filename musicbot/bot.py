@@ -168,7 +168,7 @@ class MusicBot(discord.Client):
                 self.spotify = Spotify(
                     None, None, aiosession=self.session, loop=self.loop
                 )
-                await self.spotify.get_token()
+                # await self.spotify.get_token()
                 if not self.spotify.token:
                     log.warning("Spotify did not provide us with a token. Disabling.")
                     self.config._spotify = False
