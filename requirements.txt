@@ -1,5 +1,5 @@
 pynacl
-git+https://github.com/Rapptz/discord.py
+git+https://github.com/Rapptz/discord.py@bd402b486cc12f0c1bf7377fd65f2fe0a8fabd73
 pip
 yt-dlp
 colorlog
