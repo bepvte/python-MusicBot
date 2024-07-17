@@ -56,6 +56,7 @@ log = logging.getLogger(__name__)
 intents = discord.Intents.all()
 intents.typing = False
 intents.presences = False
+intents.members = False
 
 
 class MusicBot(discord.Client):
