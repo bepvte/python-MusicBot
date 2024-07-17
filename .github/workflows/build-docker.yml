@@ -2,6 +2,10 @@ name: Docker
 
 on:
   workflow_dispatch:
+    inputs:
+      no-cache:
+        required: false
+        default: false
   push:
       branches:
         - dev
@@ -35,6 +39,7 @@ jobs:
       - name: Build and push AMD64 Docker image
         uses: docker/build-push-action@v5
         with:
+          no-cache: ${{ github.event.inputs.no-cache }}
           cache-to: type=registry,ref=${{ steps.meta.outputs.tags }}-cache,mode=max
           cache-from: type=registry,ref=${{ steps.meta.outputs.tags }}-cache
           push: true
