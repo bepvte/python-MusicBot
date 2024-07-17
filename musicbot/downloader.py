@@ -25,6 +25,8 @@ ytdl_format_options_immutable = MappingProxyType(
         "default_search": "auto",
         "source_address": "0.0.0.0",
         "usenetrc": True,
+        "cachedir": "/data/cache",
+        "netrc_location": "/musicbot/config/.netrc",
     }
 )
 

@@ -1,7 +1,8 @@
 pynacl
 git+https://github.com/Rapptz/discord.py@bd402b486cc12f0c1bf7377fd65f2fe0a8fabd73
 pip
-yt-dlp
+yt-dlp[default,curl-cffi]
+yt-dlp-youtube-oauth2 @ https://github.com/coletdjnz/yt-dlp-youtube-oauth2/archive/refs/heads/master.zip
 colorlog
 cffi --only-binary all; sys_platform == 'win32'
 APScheduler==3.10.*
