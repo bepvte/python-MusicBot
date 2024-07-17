@@ -21,7 +21,7 @@ RUN apk update && apk add --no-cache \
 COPY requirements.txt .
 
 # Install pip dependencies
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir --pre -r requirements.txt
 
 # Clean up build dependencies
 RUN apk del .build-deps
