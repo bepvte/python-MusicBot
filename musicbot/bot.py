@@ -58,7 +58,6 @@ intents.typing = False
 intents.presences = False
 intents.members = False
 
-
 class MusicBot(discord.Client):
     def __init__(self, config_file=None, perms_file=None, aliases_file=None):
         try:
