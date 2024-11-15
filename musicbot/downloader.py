@@ -24,10 +24,10 @@ ytdl_format_options_immutable = MappingProxyType(
         "no_warnings": True,
         "default_search": "auto",
         "source_address": "0.0.0.0",
-        "usenetrc": True,
+        # "usenetrc": True,
         "cachedir": "/data/cache",
-        "netrc_location": "/musicbot/config/.netrc",
-        "debug_printtraffic": False,
+        # "netrc_location": "/musicbot/config/.netrc",
+        "cookiefile": "/musicbot/config/cookies.firefox-private.txt"
     }
 )
 
