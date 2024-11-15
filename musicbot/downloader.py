@@ -28,7 +28,6 @@ ytdl_format_options_immutable = MappingProxyType(
         "cachedir": "/data/cache",
         "netrc_location": "/musicbot/config/.netrc",
         "debug_printtraffic": False,
-        "extractor_args": {'youtube': {"player_client": ["ios", "web_creator"]}}
     }
 )
 
