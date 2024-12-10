@@ -19,6 +19,8 @@ RUN apk update && apk add --no-cache \
   gcc \
   git
 
+COPY requirements.txt .
+
 # Install pip dependencies
 RUN pip3 install --no-cache-dir -r requirements.txt
 
