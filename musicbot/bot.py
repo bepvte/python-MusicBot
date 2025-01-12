@@ -1566,15 +1566,9 @@ class MusicBot(discord.Client):
 
         # if requested, try to set the bot offline.
         if set_offline:
-            activity = discord.Activity(
-                type=discord.ActivityType.custom,
-                state="",
-                name="Custom Status",  # seemingly required.
-            )
             await self.change_presence(
-                status=discord.Status.invisible, activity=activity
+                status=discord.Status.invisible
             )
-            self.last_status = activity
             return
 
         # We ignore player related status when logout is called.
@@ -1608,82 +1602,12 @@ class MusicBot(discord.Client):
                 msg = msg.replace("{p0_url}", "")
             return msg
 
-        # multiple servers are playing or paused.
-        if total > 1:
-            if paused > playing:
-                status = discord.Status.idle
-
-            text = f"music on {total} servers"
-            if self.config.status_message:
-                player = None
-                for p in self.players.values():
-                    if p.is_playing:
-                        player = p
-                        break
-                text = format_status_msg(player)
-
-            activity = discord.Activity(
-                type=discord.ActivityType.playing,
-                name=text,
-            )
-
-        # only 1 server is playing.
-        elif playing:
-            player = None
-            for p in self.players.values():
-                if p.is_playing:
-                    player = p
-                    break
-            if player and player.current_entry:
-                text = player.current_entry.title.strip()[:128]
-                if self.config.status_message:
-                    text = format_status_msg(player)
-
-                activity = discord.Activity(
-                    type=discord.ActivityType.streaming,
-                    url=player.current_entry.url,
-                    name=text,
-                )
-
-        # only 1 server is paused.
-        elif paused:
-            player = None
-            for p in self.players.values():
-                if p.is_paused:
-                    player = p
-                    break
-            if player and player.current_entry:
-                text = player.current_entry.title.strip()[:128]
-                if self.config.status_message:
-                    text = format_status_msg(player)
-
-                status = discord.Status.idle
-                activity = discord.Activity(
-                    type=discord.ActivityType.custom,
-                    state=text,
-                    name="Custom Status",  # seemingly required.
-                )
-
-        # nothing going on.
-        else:
-            text = f" ~ {EMOJI_IDLE_ICON} ~ "
-            if self.config.status_message:
-                text = format_status_msg(None)
-
-            status = discord.Status.idle
-            activity = discord.CustomActivity(
-                type=discord.ActivityType.custom,
-                state=text,
-                name="Custom Status",  # seems required to make idle status work.
-            )
-
         async with self.aiolocks[_func_()]:
-            if activity != self.last_status:
+            if True
                 log.noise(  # type: ignore[attr-defined]
                     f"Update Bot Status:  {status} -- {repr(activity)}"
                 )
-                await self.change_presence(status=status, activity=activity)
-                self.last_status = activity
+                await self.change_presence(status=status)
                 # Discord docs say Game status can only be updated 5 times in 20 seconds.
                 # This sleep should maintain the above lock for long enough to space
                 # out the status updates in multi-guild setups.
