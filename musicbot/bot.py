@@ -199,7 +199,6 @@ class MusicBot(discord.Client):
 
         intents = discord.Intents.all()
         intents.typing = False
-        intents.members = False
         intents.presences = False
         super().__init__(intents=intents)
 

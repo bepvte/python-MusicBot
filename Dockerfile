@@ -35,4 +35,4 @@ COPY ./config sample_config
 
 ENV APP_ENV=docker
 
-ENTRYPOINT ["/bin/sh", "docker-entrypoint.sh"]
+ENTRYPOINT ["/bin/sh", "docker-entrypoint.sh", "--no-check"]

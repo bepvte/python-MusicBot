@@ -1033,7 +1033,7 @@ def main() -> None:
                 )
                 break
 
-            if not tried_requirementstxt:
+            if False:
                 tried_requirementstxt = True
 
                 log.info(
