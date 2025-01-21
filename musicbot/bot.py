@@ -1603,7 +1603,7 @@ class MusicBot(discord.Client):
             return msg
 
         async with self.aiolocks[_func_()]:
-            if True
+            if True:
                 log.noise(  # type: ignore[attr-defined]
                     f"Update Bot Status:  {status} -- {repr(activity)}"
                 )
