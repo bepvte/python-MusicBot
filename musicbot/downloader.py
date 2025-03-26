@@ -55,7 +55,8 @@ ytdl_format_options_immutable = MappingProxyType(
         "extract_flat": "in_playlist",
         "default_search": "auto",
         "source_address": "0.0.0.0",
-         "cookiefile": "/musicbot/config/cookies.firefox-private.txt",
+        "cookiefile": "/musicbot/config/cookies.firefox-private.txt",
+        "extractor_args": "youtube:player_skip=webpage",
         "usenetrc": True,
         "no_color": True,
     }
