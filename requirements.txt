@@ -1,5 +1,5 @@
 pynacl
-discord.py [voice, speed] @ https://github.com/DA-344/d.py/archive/refs/heads/fix/voice-issues.zip
+discord.py [voice, speed] @ https://github.com/Rapptz/discord.py/archive/2175bd51c0d0c2817e69a708e507108f3bc902bd.zip
 pip
 yt-dlp
 colorlog
