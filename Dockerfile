@@ -18,10 +18,9 @@ RUN apk update && apk add --no-cache \
   libsodium \
   gcc \
   git \
-  curl
-
-RUN curl -fsSL https://deno.land/install.sh | sh
-
+  curl \
+  deno
+  
 COPY requirements.txt .
 
 # Install pip dependencies
