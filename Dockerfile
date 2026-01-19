@@ -37,5 +37,6 @@ COPY ./config sample_config
 # VOLUME ["/musicbot/audio_cache", "/musicbot/config", "/musicbot/data", "/musicbot/logs"]
 
 ENV APP_ENV=docker
+ENV PATH="$PATH:/root/.deno/bin/"
 
 ENTRYPOINT ["/bin/sh", "docker-entrypoint.sh", "--no-check"]
