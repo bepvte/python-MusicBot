@@ -2,6 +2,7 @@ pynacl
 discord.py [voice, speed] @ https://github.com/Rapptz/discord.py/archive/2175bd51c0d0c2817e69a708e507108f3bc902bd.zip
 pip
 yt-dlp
+yt-dlp-ejs
 colorlog
 colorama >= 0.4.6; sys_platform == 'win32'
 cffi --only-binary all; sys_platform == 'win32'
