@@ -1,4 +1,4 @@
-FROM python:3.11-alpine
+FROM python:3.14-alpine
 
 # Add project source
 WORKDIR /musicbot
@@ -18,6 +18,8 @@ RUN apk update && apk add --no-cache \
   libsodium \
   gcc \
   git
+
+RUN curl -fsSL https://deno.land/install.sh | sh
 
 COPY requirements.txt .
 
