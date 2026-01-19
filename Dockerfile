@@ -17,7 +17,8 @@ RUN apk update && apk add --no-cache \
   libffi \
   libsodium \
   gcc \
-  git
+  git \
+  curl
 
 RUN curl -fsSL https://deno.land/install.sh | sh
 
