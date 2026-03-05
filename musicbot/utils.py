@@ -8,7 +8,7 @@ import re
 import sys
 import unicodedata
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Callable, Iterable, List, Set, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Set, Union
 
 # protected imports to keep run.py from breaking on missing packages.
 try:
@@ -61,12 +61,13 @@ def _add_logger_level(levelname: str, level: int, *, func_name: str = "") -> Non
 
     # TODO: this is cool and all, but there is likely a better way to do this.
     # we should probably be extending logging.getLoggerClass() instead
+    ldict: Dict[str, Any] = {}
     exec(  # pylint: disable=exec-used
         _func_prototype.format(logger_func_name=func_name, levelname=levelname),
         logging.__dict__,
-        locals(),
+        ldict,
     )
-    setattr(logging.Logger, func_name, eval(func_name))  # pylint: disable=eval-used
+    setattr(logging.Logger, func_name, ldict[func_name])
 
 
 def setup_loggers() -> None:
