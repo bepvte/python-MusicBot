@@ -19,7 +19,7 @@ RUN apk update && apk add --no-cache \
   gcc \
   git \
   curl \
-  deno
+  nodejs-current
   
 COPY requirements.txt .
 
@@ -36,6 +36,7 @@ COPY ./config sample_config
 # VOLUME ["/musicbot/audio_cache", "/musicbot/config", "/musicbot/data", "/musicbot/logs"]
 
 ENV APP_ENV=docker
-ENV PATH="$PATH:/root/.deno/bin/"
+# cap V8 heap for the yt-dlp EJS challenge solver so it cannot balloon the container
+ENV NODE_OPTIONS="--max-old-space-size=256"
 
 ENTRYPOINT ["/bin/sh", "docker-entrypoint.sh", "--no-check"]

@@ -1,5 +1,9 @@
 pynacl
 discord.py [voice, speed]
+# davey 0.2 needs prepare/execute_transition calls discord.py 2.7.1 never makes (DAVE never ready -> silent audio). See Rapptz/discord.py#10548
+davey < 0.2
+# davey 0.2 requires prepare/execute_transition calls that discord.py 2.7.1 never makes -> DAVE never ready, silent audio
+davey < 0.2
 pip
 yt-dlp
 yt-dlp-ejs

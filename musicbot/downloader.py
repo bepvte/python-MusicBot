@@ -58,6 +58,8 @@ ytdl_format_options_immutable = MappingProxyType(
          "cookiefile": "/musicbot/config/cookies.firefox-private.txt",
         "usenetrc": True,
         "no_color": True,
+        # yt-dlp defaults to deno only; use node for the YouTube JS challenge solver.
+        "js_runtimes": {"node": {}},
     }
 )
 
